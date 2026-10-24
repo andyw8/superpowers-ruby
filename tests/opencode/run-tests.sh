@@ -43,9 +43,9 @@ while [[ $# -gt 0 ]]; do
             echo "  --help, -h         Show this help"
             echo ""
             echo "Tests:"
-            echo "  test-plugin-loading.sh  Verify plugin installation and structure"
-            echo "  test-tools.sh           Test use_skill and find_skills tools (integration)"
-            echo "  test-priority.sh        Test skill priority resolution (integration)"
+            echo "  test-plugin-loading.sh  Verify the V2 plugin entrypoint and bundled files"
+            echo "  test-skills.sh          Test skill registration via the OpenCode API (integration)"
+            echo "  test-priority.sh        Test project skill priority via the OpenCode API (integration)"
             exit 0
             ;;
         *)
@@ -63,7 +63,7 @@ tests=(
 
 # Integration tests (require OpenCode)
 integration_tests=(
-    "test-tools.sh"
+    "test-skills.sh"
     "test-priority.sh"
 )
 

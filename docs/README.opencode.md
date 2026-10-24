@@ -1,55 +1,85 @@
 # Superpowers for OpenCode
 
-Complete guide for using Superpowers with [OpenCode.ai](https://opencode.ai).
+Complete guide for using Superpowers with [OpenCode](https://opencode.ai) **2.x**.
+
+> **OpenCode 2 is required.** Superpowers uses the OpenCode 2 plugin API (`Plugin.define`, domain transforms, and session hooks). It does not load on OpenCode 1. See [Migrate from V1](https://opencode.ai/v2/docs/migrate-v1) if you are upgrading OpenCode itself.
+
+## Requirements
+
+- OpenCode 2 (`opencode --version` reports `2.x` or newer)
+- Git on your `PATH`
 
 ## Installation
 
-Add superpowers to the `plugin` array in your `opencode.json` (global or project-level):
+Install with the OpenCode CLI:
 
-```json
+```bash
+opencode plugin add 'superpowers-ruby@git+https://github.com/lucianghinda/superpowers-ruby.git'
+```
+
+Or edit `opencode.json(c)` directly (global at `~/.config/opencode/`, or project-level):
+
+```jsonc
 {
-  "plugin": ["superpowers-ruby@git+https://github.com/lucianghinda/superpowers-ruby.git"]
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": ["superpowers-ruby@git+https://github.com/lucianghinda/superpowers-ruby.git"]
 }
 ```
 
-Restart OpenCode. The plugin auto-installs via Bun and registers all skills automatically.
+Restart OpenCode. OpenCode installs the plugin and the plugin registers all bundled skills — no symlinks and no `skills` config entry required.
 
-Verify by asking: "Tell me about your superpowers"
-
-### Migrating from the old symlink-based install
-
-If you previously installed superpowers using `git clone` and symlinks, remove the old setup:
+Verify:
 
 ```bash
-# Remove old symlinks
-rm -f ~/.config/opencode/plugins/superpowers.js
-rm -rf ~/.config/opencode/skills/superpowers-ruby
-
-# Optionally remove the cloned repo
-rm -rf ~/.config/opencode/superpowers-ruby
-
-# Remove skills.paths from opencode.json if you added one for superpowers
+opencode plugin list          # superpowers-ruby should be listed
+opencode api get /api/skill   # brainstorming, handoff, using-superpowers, ...
 ```
 
-Then follow the installation steps above.
+Then ask: "Tell me about your superpowers".
+
+### Migrating from OpenCode 1 or an old symlink install
+
+This plugin replaces both the V1 plugin and the old `git clone` + symlink setup:
+
+```bash
+# Remove old symlinks or cloned plugin files
+rm -f ~/.config/opencode/plugins/superpowers.js
+rm -rf ~/.config/opencode/skills/superpowers-ruby
+rm -rf ~/.config/opencode/superpowers-ruby
+
+# Remove the old "plugin" entry from opencode.json(c), then install as above.
+```
+
+The V1 `skills.paths` config is not used by OpenCode. Use the `skills` array instead; Superpowers does not need an entry there because the plugin registers its own skills.
 
 ## Usage
 
-### Finding Skills
+### Finding skills
 
-Use OpenCode's native `skill` tool to list all available skills:
-
-```
-use skill tool to list skills
-```
-
-### Loading a Skill
+Use OpenCode's native `skill` tool:
 
 ```
-use skill tool to load superpowers-ruby/brainstorming
+use the skill tool to list skills
 ```
 
-### Personal Skills
+### Loading a skill
+
+Use the skill's **bare ID**:
+
+```
+use the skill tool to load brainstorming
+use the skill tool to load handoff
+```
+
+Or mention it directly:
+
+```
+@brainstorming help me design this feature
+```
+
+Skill IDs are derived from the directory name. On OpenCode they are `brainstorming`, `handoff`, `using-superpowers`, and so on — not `superpowers-ruby/brainstorming` or `superpowers-ruby:brainstorming`.
+
+### Personal skills
 
 Create your own skills in `~/.config/opencode/skills/`:
 
@@ -70,61 +100,111 @@ description: Use when [condition] - [what it does]
 [Your skill content here]
 ```
 
-### Project Skills
+### Project skills
 
-Create project-specific skills in `.opencode/skills/` within your project.
+Create project-specific skills in `.opencode/skills/` inside the project:
 
-**Skill Priority:** Project skills > Personal skills > Superpowers skills
+```text
+.opencode/skills/my-project-skill/SKILL.md
+```
+
+### Skill priority
+
+Project skills override personal skills, which override the skills bundled with Superpowers:
+
+```text
+.opencode/skills/<id>/SKILL.md              (highest)
+~/.config/opencode/skills/<id>/SKILL.md
+skills bundled by superpowers-ruby          (lowest)
+```
+
+OpenCode selects skills by ID, so a project copy of `brainstorming` replaces the bundled `brainstorming` for that project.
 
 ## Updating
 
-Superpowers updates automatically when you restart OpenCode. The plugin is re-installed from the git repository on each launch.
+OpenCode checks unpinned Git plugins for updates at startup. To update explicitly:
 
-To pin a specific version, use a branch or tag:
+```bash
+opencode plugin update superpowers-ruby
+opencode reload
+```
 
-```json
+To pin a release, append its tag or commit hash to the Git spec:
+
+```jsonc
 {
-  "plugin": ["superpowers-ruby@git+https://github.com/lucianghinda/superpowers-ruby.git#v6.0.0"]
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": [
+    "superpowers-ruby@git+https://github.com/lucianghinda/superpowers-ruby.git#<tag-or-commit>"
+  ]
 }
 ```
 
 ## How It Works
 
-The plugin does two things:
+The plugin is a native OpenCode plugin (`Plugin.define({ id: "superpowers-ruby", setup(ctx) })`). It does four things:
 
-1. **Injects bootstrap context** via the `experimental.chat.system.transform` hook, adding superpowers awareness to every conversation.
-2. **Registers the skills directory** via the `config` hook, so OpenCode discovers all superpowers skills without symlinks or manual config.
+1. **Registers bundled skills** with `ctx.skill.transform`, including frontmatter names, descriptions, and bodies. Skills with `disable-model-invocation: true` are registered with `autoinvoke: false`.
+2. **Loads `using-superpowers` once per session** through the `prompt` session hook. It checks the session's history first, so the bootstrap is not duplicated on later prompts or after a restart.
+3. **Captures a handoff document** before compaction with the `compaction` session hook (`hooks/handoff-create`).
+4. **Restores the handoff after compaction** by subscribing to `session.compaction.ended`, running `hooks/handoff-restore`, and adding the restored document to the system prompt for that session.
+
+All of the above use the V2 plugin API. There is no `config` hook, no `skills.paths` mutation, and no V1 experimental hook names.
 
 ### Tool Mapping
 
-Skills written for Claude Code are automatically adapted for OpenCode:
+Skills written for Claude Code are adapted for OpenCode:
 
-- `TodoWrite` → `todowrite`
-- `Task` with subagents → OpenCode's `@mention` system
-- `Skill` tool → OpenCode's native `skill` tool
-- File operations → Native OpenCode tools
+| Skill references | OpenCode |
+|---|---|
+| `TodoWrite` | `todowrite` — enable with `{"experimental": {"todo": true}}`; todos are off by default |
+| `Task` tool with subagents | OpenCode's subagent system |
+| `Skill` tool | OpenCode's native `skill` tool, using the bare skill ID |
+| `Read`, `Write`, `Edit` | Native OpenCode file tools |
+| `Bash` | Native OpenCode shell tool |
+
+See [`../skills/using-superpowers/references/opencode-tools.md`](../skills/using-superpowers/references/opencode-tools.md) for details.
 
 ## Troubleshooting
 
 ### Plugin not loading
 
-1. Check OpenCode logs: `opencode run --print-logs "hello" 2>&1 | grep -i superpowers`
-2. Verify the plugin line in your `opencode.json` is correct
-3. Make sure you're running a recent version of OpenCode
+1. Confirm OpenCode 2 is installed:
+   ```bash
+   opencode --version
+   ```
+2. Check the plugin list:
+   ```bash
+   opencode plugin list
+   ```
+3. Read the server log:
+   ```bash
+   grep 'role=server' ~/.local/share/opencode/log/opencode.log | grep -i superpowers
+   ```
+4. Verify the `plugins` entry in `opencode.json(c)`, then restart:
+   ```bash
+   opencode service restart
+   ```
+
+`opencode run --print-logs` still works, but server logs require `--standalone`.
 
 ### Skills not found
 
-1. Use OpenCode's `skill` tool to list available skills
-2. Check that the plugin is loading (see above)
-3. Each skill needs a `SKILL.md` file with valid YAML frontmatter
+1. Use OpenCode's `skill` tool to list available skills, or query the API:
+   ```bash
+   opencode api get /api/skill
+   ```
+2. Confirm the plugin is active (see above).
+3. Each skill needs a `SKILL.md` with valid YAML frontmatter containing a `description`.
 
 ### Bootstrap not appearing
 
-1. Check OpenCode version supports `experimental.chat.system.transform` hook
-2. Restart OpenCode after config changes
+1. Confirm `using-superpowers` is in the skill list.
+2. Start a new session. The bootstrap is attached to the first prompt of each session, not added to every request.
+3. Restart OpenCode after changing the plugin.
 
 ## Getting Help
 
 - Report issues: https://github.com/lucianghinda/superpowers-ruby/issues
 - Main documentation: https://github.com/lucianghinda/superpowers-ruby
-- OpenCode docs: https://opencode.ai/docs/
+- OpenCode docs: https://opencode.ai/v2/docs/

@@ -52,12 +52,12 @@ Thanks!
 
 ## Installation
 
-`superpowers-ruby` ships as a **native plugin** for three platforms — **Codex**,
-**Claude Code**, and **Copilot CLI** — using each platform's plugin marketplace.
-A single repo with three platform-specific manifests
-(`.codex-plugin/plugin.json`, `.claude-plugin/plugin.json`, and
-`.cursor-plugin/plugin.json`), plus dedicated install paths for OpenCode and
-Gemini CLI.
+`superpowers-ruby` ships as a **native plugin** for four platforms — **Codex**,
+**Claude Code**, **Copilot CLI**, and **OpenCode** — using each platform's
+plugin system. The repo contains marketplace manifests for Claude Code, Codex,
+and Cursor (`.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`,
+`.cursor-plugin/plugin.json`), a native OpenCode plugin entrypoint, and a
+Gemini CLI extension.
 
 Quick reference:
 
@@ -67,7 +67,7 @@ Quick reference:
 | **Codex** (7.0.0+) | Native plugin | `codex plugin marketplace add lucianghinda/superpowers-ruby` then `codex plugin add superpowers-ruby@superpowers-ruby` |
 | **GitHub Copilot CLI** | Native plugin | `copilot plugin marketplace add lucianghinda/superpowers-ruby` then `copilot plugin install superpowers-ruby@superpowers-ruby` |
 | **Cursor** | Local clone (no marketplace yet) | `cd ~/.cursor/plugins/local/ && git clone https://github.com/lucianghinda/superpowers-ruby` |
-| **OpenCode** | Agent-driven setup | See [`.opencode/INSTALL.md`](.opencode/INSTALL.md) |
+| **OpenCode** | Native plugin | `opencode plugin add 'superpowers-ruby@git+https://github.com/lucianghinda/superpowers-ruby.git'` |
 | **Gemini CLI** | Extension | `gemini extensions install https://github.com/lucianghinda/superpowers-ruby` |
 
 Detailed instructions per platform follow below.
@@ -124,7 +124,24 @@ for both paths and the migration guide.
 
 ### OpenCode
 
-Tell OpenCode:
+**OpenCode 2 is required.** Superpowers uses the OpenCode 2 plugin API and does not load on OpenCode 1.
+
+```bash
+opencode plugin add 'superpowers-ruby@git+https://github.com/lucianghinda/superpowers-ruby.git'
+```
+
+Or add the plugin to the `plugins` array in `opencode.json(c)`:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": ["superpowers-ruby@git+https://github.com/lucianghinda/superpowers-ruby.git"]
+}
+```
+
+Restart OpenCode, then verify with `opencode plugin list`. Skills are loaded with their bare IDs (for example, `brainstorming` or `handoff`).
+
+You can also tell OpenCode:
 
 ```
 Fetch and follow instructions from https://raw.githubusercontent.com/lucianghinda/superpowers-ruby/refs/heads/main/.opencode/INSTALL.md
@@ -284,9 +301,13 @@ cd ~/.cursor/plugins/local/superpowers-ruby && git pull
 
 ### OpenCode
 
-Pull the latest in the install directory and restart OpenCode. See
-[`.opencode/INSTALL.md`](.opencode/INSTALL.md) for the exact path on your
-machine.
+```bash
+opencode plugin update superpowers-ruby
+opencode reload
+```
+
+See [`.opencode/INSTALL.md`](.opencode/INSTALL.md) for pinned installs and
+troubleshooting.
 
 ### Gemini CLI
 

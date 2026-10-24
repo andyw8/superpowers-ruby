@@ -1,132 +1,198 @@
 /**
- * Superpowers plugin for OpenCode.ai
+ * Superpowers plugin for OpenCode 2
  *
- * Injects superpowers-ruby bootstrap context into the first user message.
- * Auto-registers skills directory via config hook (no symlinks needed).
+ * Registers the bundled skills with OpenCode's native skill system and loads
+ * the using-superpowers skill once per session. Also captures and restores
+ * handoff documents around context compaction.
+ *
+ * Requires OpenCode 2. This file uses the V2 plugin API and does not run on
+ * OpenCode 1.
  */
 
-import path from 'path';
-import fs from 'fs';
-import { execSync } from 'child_process';
-import { fileURLToPath } from 'url';
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const SKILLS_DIR = path.join(PLUGIN_ROOT, 'skills');
+const BOOTSTRAP_SKILL = 'using-superpowers';
 
-// Simple frontmatter extraction (avoid dependency on skills-core for bootstrap)
-const extractAndStripFrontmatter = (content) => {
-  const match = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-  if (!match) return { frontmatter: {}, content };
+/**
+ * Parse the small YAML subset used by superpowers skill frontmatter: scalar
+ * values, quoted strings, and folded/literal block scalars.
+ */
+const parseFrontmatter = (source) => {
+  const match = source.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  if (!match) return { data: {}, content: source };
 
-  const frontmatterStr = match[1];
-  const body = match[2];
-  const frontmatter = {};
+  const data = {};
+  const lines = match[1].split(/\r?\n/);
 
-  for (const line of frontmatterStr.split('\n')) {
-    const colonIdx = line.indexOf(':');
-    if (colonIdx > 0) {
-      const key = line.slice(0, colonIdx).trim();
-      const value = line.slice(colonIdx + 1).trim().replace(/^["']|["']$/g, '');
-      frontmatter[key] = value;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const entry = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+    if (!entry) continue;
+
+    const key = entry[1];
+    let value = entry[2].trim();
+
+    if (/^[>|][+-]?$/.test(value)) {
+      const folded = value.startsWith('>');
+      const parts = [];
+      while (i + 1 < lines.length && (/^\s/.test(lines[i + 1]) || lines[i + 1].trim() === '')) {
+        i++;
+        parts.push(lines[i].trim());
+      }
+      value = (folded ? parts.join(' ') : parts.join('\n')).trim();
+    } else if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
     }
+
+    data[key] = value;
   }
 
-  return { frontmatter, content: body };
+  return { data, content: match[2] };
 };
 
-export const SuperpowersPlugin = async ({ client, directory }) => {
-  const superpowersSkillsDir = path.resolve(__dirname, '../../skills');
+const loadBundledSkills = () => {
+  if (!fs.existsSync(SKILLS_DIR)) return [];
 
-  // Helper to generate bootstrap content
-  const getBootstrapContent = () => {
-    // Try to load using-superpowers skill
-    const skillPath = path.join(superpowersSkillsDir, 'using-superpowers', 'SKILL.md');
-    if (!fs.existsSync(skillPath)) return null;
+  return fs
+    .readdirSync(SKILLS_DIR, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => {
+      const file = path.join(SKILLS_DIR, entry.name, 'SKILL.md');
+      if (!fs.existsSync(file)) return undefined;
 
-    const fullContent = fs.readFileSync(skillPath, 'utf8');
-    const { content } = extractAndStripFrontmatter(fullContent);
+      const { data, content } = parseFrontmatter(fs.readFileSync(file, 'utf8'));
+      const skill = {
+        id: entry.name,
+        name: data.name || entry.name,
+        path: file,
+        content,
+      };
 
-    const toolMapping = `**Tool Mapping for OpenCode:**
-When skills reference tools you don't have, substitute OpenCode equivalents:
-- \`TodoWrite\` → \`todowrite\`
-- \`Task\` tool with subagents → Use OpenCode's subagent system (@mention)
-- \`Skill\` tool → OpenCode's native \`skill\` tool
-- \`Read\`, \`Write\`, \`Edit\`, \`Bash\` → Your native tools
-
-Use OpenCode's native \`skill\` tool to list and load superpowers-ruby skills.`;
-
-    return `<EXTREMELY_IMPORTANT>
-You have superpowers for Ruby and Rails.
-
-**IMPORTANT: The using-superpowers skill content is included below. It is ALREADY LOADED - you are currently following it. Do NOT use the skill tool to load "using-superpowers" again - that would be redundant.**
-
-${content}
-
-${toolMapping}
-</EXTREMELY_IMPORTANT>`;
-  };
-
-  return {
-    // Inject skills path into live config so OpenCode discovers superpowers skills
-    // without requiring manual symlinks or config file edits.
-    // This works because Config.get() returns a cached singleton — modifications
-    // here are visible when skills are lazily discovered later.
-    config: async (config) => {
-      config.skills = config.skills || {};
-      config.skills.paths = config.skills.paths || [];
-      if (!config.skills.paths.includes(superpowersSkillsDir)) {
-        config.skills.paths.push(superpowersSkillsDir);
+      if (data.description) skill.description = data.description;
+      if (String(data['disable-model-invocation']).toLowerCase() === 'true') {
+        skill.autoinvoke = false;
       }
-    },
 
-    // Inject bootstrap into the first user message (avoids per-turn token cost
-    // of system messages and fixes model compatibility with Qwen and others).
-    'experimental.chat.messages.transform': async (_input, output) => {
-      const bootstrap = getBootstrapContent();
-      if (!bootstrap || !output.messages.length) return;
-      const firstUser = output.messages.find(m => m.info.role === 'user');
-      if (!firstUser || !firstUser.parts.length) return;
-      // Only inject once
-      if (firstUser.parts.some(p => p.type === 'text' && p.text.includes('EXTREMELY_IMPORTANT'))) return;
-      const ref = firstUser.parts[0];
-      firstUser.parts.unshift({ ...ref, type: 'text', text: bootstrap });
-    },
+      return skill;
+    })
+    .filter(Boolean);
+};
 
-    // Capture handoff document before compaction
-    'experimental.session.compacting': async () => {
-      const hookScript = path.resolve(__dirname, '../../hooks/handoff-create');
-      if (!fs.existsSync(hookScript)) return;
+const runHook = (scriptName, args, cwd) => {
+  const script = path.join(PLUGIN_ROOT, 'hooks', scriptName);
+  if (!fs.existsSync(script)) return '';
+
+  try {
+    return execFileSync('bash', [script, ...args], {
+      cwd,
+      encoding: 'utf8',
+      timeout: 10_000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (error) {
+    console.error(`[superpowers-ruby] ${scriptName} failed: ${error.message}`);
+    return '';
+  }
+};
+
+const restoreHandoff = (cwd) => {
+  const output = runHook('handoff-restore', [], cwd).trim();
+  if (!output) return undefined;
+
+  try {
+    const parsed = JSON.parse(output);
+    return parsed.additionalContext || parsed.additional_context || parsed.systemMessage;
+  } catch (error) {
+    console.error(`[superpowers-ruby] could not parse handoff-restore output: ${error.message}`);
+    return undefined;
+  }
+};
+
+export default {
+  id: 'superpowers-ruby',
+  async setup(ctx) {
+    const directory = ctx.location.directory;
+    const skills = loadBundledSkills();
+
+    if (skills.length > 0) {
+      await ctx.skill.transform((editor) => {
+        for (const skill of skills) editor.add(skill);
+      });
+    }
+
+    const bootstrapped = new Set();
+    const restoredHandoffs = new Map();
+
+    // Load using-superpowers once per session, the first time the user prompts.
+    await ctx.session.hook('prompt', async (event) => {
+      if (bootstrapped.has(event.sessionID)) return;
+      bootstrapped.add(event.sessionID);
+
       try {
-        execSync(`bash "${hookScript}" --trigger compact`, {
-          cwd: directory || process.cwd(),
-          timeout: 10000,
-          stdio: ['pipe', 'pipe', 'pipe']
-        });
-      } catch (_e) {
-        // Handoff capture is best-effort — don't block compaction on failure
+        const messages = await ctx.session.context({ sessionID: event.sessionID });
+        const alreadyLoaded = messages.some((message) =>
+          (message.type === 'skill' && message.skill === BOOTSTRAP_SKILL) ||
+          (Array.isArray(message.skills) &&
+            message.skills.some((skill) => skill.id === BOOTSTRAP_SKILL)),
+        );
+        if (alreadyLoaded) return;
+      } catch (error) {
+        console.error(`[superpowers-ruby] could not read session context: ${error.message}`);
       }
-    },
 
-    // Restore handoff document after compaction
-    'session.compacted': async () => {
-      const hookScript = path.resolve(__dirname, '../../hooks/handoff-restore');
-      if (!fs.existsSync(hookScript)) return;
+      const selectedSkills = event.prompt.skills ?? [];
+      if (selectedSkills.some((skill) => skill.id === BOOTSTRAP_SKILL)) return;
+
+      event.prompt.skills = [...selectedSkills, { id: BOOTSTRAP_SKILL }];
+    });
+
+    // Capture a handoff document before the compaction summary is generated.
+    await ctx.session.hook('compaction', async () => {
+      runHook('handoff-create', ['--trigger', 'compact'], directory);
+    });
+
+    // Restore a captured handoff after compaction. The restored document is
+    // added to the system prompt of subsequent requests in that session.
+    await ctx.session.hook('context', (event) => {
+      const handoff = restoredHandoffs.get(event.sessionID);
+      if (handoff) event.system.push({ type: 'text', text: handoff });
+    });
+
+    const controller = new AbortController();
+
+    void (async () => {
       try {
-        const output = execSync(`bash "${hookScript}"`, {
-          cwd: directory || process.cwd(),
-          timeout: 10000,
-          stdio: ['pipe', 'pipe', 'pipe'],
-          encoding: 'utf8'
-        });
-        if (output && output.trim()) {
-          const parsed = JSON.parse(output.trim());
-          const context = parsed.additionalContext;
-          if (context) {
-            return { additionalContext: context };
+        for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
+          if (event.type === 'session.compaction.ended') {
+            const eventDirectory = event.location?.directory;
+            if (eventDirectory && path.resolve(eventDirectory) !== path.resolve(directory)) continue;
+
+            const sessionID = event.data?.sessionID;
+            const handoff = restoreHandoff(eventDirectory || directory);
+            if (sessionID && handoff) restoredHandoffs.set(sessionID, handoff);
+          } else if (event.type === 'session.deleted') {
+            const sessionID = event.data?.sessionID;
+            if (sessionID) {
+              bootstrapped.delete(sessionID);
+              restoredHandoffs.delete(sessionID);
+            }
           }
         }
-      } catch (_e) {
-        // Restore is best-effort — session continues without handoff on failure
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          console.error(`[superpowers-ruby] event subscription failed: ${error.message}`);
+        }
       }
-    }
-  };
+    })();
+
+    return () => controller.abort();
+  },
 };

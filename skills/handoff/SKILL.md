@@ -132,10 +132,10 @@ Summary:
 This skill also runs automatically via hooks when context compaction occurs:
 
 - **Claude Code:** `PreCompact` hook runs `hooks/handoff-create` before compaction
-- **OpenCode:** `experimental.session.compacting` event triggers the same script
+- **OpenCode:** the `compaction` session hook runs `hooks/handoff-create` before compaction, and the `session.compaction.ended` event runs `hooks/handoff-restore`
 - **Codex:** No compaction hooks available — use this skill manually
 
-The hook-generated handoff captures mechanical state only (modified files, plan files). After compaction, the `PostCompact` hook (or `session.compacted` event) restores the handoff as `additionalContext` and instructs the agent to fill in the LLM-dependent sections from compacted context.
+The hook-generated handoff captures mechanical state only (modified files, plan files). After compaction, the `PostCompact` hook (Claude Code) or OpenCode's `session.compaction.ended` event restores the handoff and instructs the agent to fill in the LLM-dependent sections from compacted context.
 
 ## Cross-Agent Handoff
 

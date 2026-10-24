@@ -41,7 +41,7 @@ look helps confirm the install actually picked up your branch:
 | Claude Code | `~/.claude/plugins/cache/<marketplace>/superpowers-ruby/<version>/` |
 | Codex | `~/.codex/plugins/cache/<marketplace>/superpowers-ruby/<version>/` |
 | Copilot CLI | `~/.copilot/installed-plugins/_direct/superpowers-ruby/` (for direct installs) |
-| OpenCode | `~/.config/opencode/plugins/superpowers.js` (symlink to install location) |
+| OpenCode | Managed by OpenCode's plugin cache; inspect with `opencode plugin list` |
 
 The `_direct/` segment in Copilot's path is its marker for "installed from a
 non-marketplace source" — useful to confirm a local-path install did what you
@@ -208,70 +208,72 @@ codex plugin marketplace remove superpowers-ruby
 
 ## 4. OpenCode
 
-OpenCode's plugin URL syntax (`<name>@git+<url>#<ref>`) supports refs natively,
-so branch testing is configuration-only.
+Requires OpenCode 2. OpenCode's Git plugin spec (`<name>@git+<url>#<ref>`)
+supports refs natively, so branch testing is configuration-only.
 
 ### Test from GitHub branch (cleanest — no clone step)
 
-Edit your `opencode.json` (global at `~/.config/opencode/opencode.json` or
-project-level) and change the existing `superpowers-ruby` plugin entry to
-pin the branch:
+Edit your `opencode.json(c)` (global at `~/.config/opencode/opencode.json(c)`
+or project-level) and change the existing `superpowers-ruby` entry to pin the
+branch:
 
 ```json
 {
-  "plugin": [
-    "superpowers-ruby@git+https://github.com/lucianghinda/superpowers-ruby.git#lg/rename-compatibility"
+  "plugins": [
+    "superpowers-ruby@git+https://github.com/lucianghinda/superpowers-ruby.git#opencode-v2-support"
   ]
 }
 ```
 
-Restart OpenCode. The `#<branch>` suffix tells OpenCode's installer to
-fetch that ref instead of the default branch.
+Restart OpenCode. The `#<branch>` suffix tells OpenCode's installer to fetch
+that ref instead of the default branch.
 
 ### Test from local working tree
 
-The same plugin URL syntax accepts `file://` git URLs:
+The same spec accepts `file://` Git URLs:
 
 ```json
 {
-  "plugin": [
-    "superpowers-ruby@git+file:///Users/lucianghinda/Dropbox/workprojects/opensource/superpowers-ruby#lg/rename-compatibility"
+  "plugins": [
+    "superpowers-ruby@git+file:///Users/lucianghinda/Dropbox/workprojects/opensource/superpowers-ruby#opencode-v2-support"
   ]
 }
 ```
 
-Or run the existing test harness, which fakes a plugin install from the
-working tree:
+Or run the existing test harness, which copies the plugin into an isolated
+project and queries OpenCode's plugin and skill APIs:
 
 ```bash
 cd "$LOCAL_PATH"
 bash tests/opencode/setup.sh
-bash tests/opencode/test-tools.sh
+bash tests/opencode/test-plugin-loading.sh
+bash tests/opencode/test-skills.sh
 bash tests/opencode/test-priority.sh
 ```
 
-The setup script copies the working tree into a temp `$HOME` and registers
-OpenCode's plugin pointer at `$TEST_HOME/.config/opencode/plugins/superpowers.js`.
-
 ### Verify
 
-- Plugin loads in logs:
+- Plugin is listed and active:
   ```bash
-  opencode run --print-logs "hello" 2>&1 | grep -i superpowers
+  opencode plugin list
+  ```
+- Bundled skills are registered:
+  ```bash
+  opencode api get /api/skill
   ```
 - Skill resolves via the OpenCode skill tool: ask OpenCode to
-  `use skill tool to load superpowers-ruby/handoff`.
-- The existing `tests/opencode/test-tools.sh` smoke test asserts that
-  `superpowers-ruby:brainstorming` and `superpowers-ruby:using-superpowers`
-  load correctly — run it as the regression check.
+  `use the skill tool to load handoff`.
+- `tests/opencode/test-skills.sh` asserts that the bundled skills
+  (`brainstorming`, `handoff`, `using-superpowers`, ...) are registered with
+  their bare IDs. Run it as the regression check.
 
 ### Restore afterwards
 
-Edit `opencode.json` back to the production install (no `#<ref>` suffix):
+Edit `opencode.json(c)` back to the production install (no `#<ref>` suffix):
 
 ```json
 {
-  "plugin": [
+  "plugins": [
     "superpowers-ruby@git+https://github.com/lucianghinda/superpowers-ruby.git"
   ]
 }
@@ -284,7 +286,7 @@ Edit `opencode.json` back to the production install (no `#<ref>` suffix):
 ## Cross-platform regression checklist
 
 Use this after testing on each platform to confirm there are no regressions
-from the v7.0.0 bare-name change:
+from the OpenCode plugin change and the earlier bare-name change:
 
 - [ ] All 6 originally-broken skills (`compound`, `compound-refresh`,
       `consulting-an-oracle`, `handoff`, `handoff-list`, `handoff-resume`)
@@ -293,8 +295,9 @@ from the v7.0.0 bare-name change:
       with no double-prefix display.
 - [ ] On **Codex**, all 34 skills are discoverable (either via the symlink
       or via the plugin cache).
-- [ ] On **OpenCode**, `tests/opencode/test-tools.sh` and
-      `tests/opencode/test-priority.sh` pass.
+- [ ] On **OpenCode** (2.x), `tests/opencode/test-plugin-loading.sh`,
+      `tests/opencode/test-skills.sh`, and `tests/opencode/test-priority.sh`
+      pass.
 - [ ] Slash-command invocation paths from the user's perspective are
       unchanged (`/superpowers-ruby:handoff` still works).
 - [ ] Skill cross-references in skill bodies use `superpowers-ruby:<slug>`

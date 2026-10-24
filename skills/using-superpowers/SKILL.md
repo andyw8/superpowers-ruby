@@ -33,11 +33,13 @@ If CLAUDE.md, GEMINI.md, or AGENTS.md says "don't use TDD" and a skill says "alw
 
 **In Gemini CLI:** Skills activate via the `activate_skill` tool. Gemini loads skill metadata at session start and activates the full content on demand.
 
+**In OpenCode:** Use OpenCode's native `skill` tool with the **bare skill ID** (`brainstorming`, not `superpowers-ruby:brainstorming`). You can also mention a skill directly as `@brainstorming`.
+
 **In other environments:** Check your platform's documentation for how skills are loaded.
 
 ## Platform Adaptation
 
-Skills use Claude Code tool names. Non-CC platforms: see `references/copilot-tools.md` (Copilot CLI), `references/codex-tools.md` (Codex) for tool equivalents. Gemini CLI users get the tool mapping loaded automatically via GEMINI.md.
+Skills use Claude Code tool names. Non-CC platforms: see `references/copilot-tools.md` (Copilot CLI), `references/codex-tools.md` (Codex), and `references/opencode-tools.md` (OpenCode) for tool equivalents. Gemini CLI users get the tool mapping loaded automatically via GEMINI.md.
 
 # Using Skills
 
@@ -119,6 +121,8 @@ Instructions say WHAT, not HOW. "Add X" or "Fix Y" doesn't mean skip workflows.
 ## Skills Catalog
 
 All available skills — invoke with the `Skill` tool using the `name` value.
+
+> **OpenCode:** skill IDs are bare and path-derived. Drop the `superpowers-ruby:` prefix (use `brainstorming`, not `superpowers-ruby:brainstorming`). See `references/opencode-tools.md`.
 
 ### Process & Workflow
 

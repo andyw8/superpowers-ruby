@@ -1,5 +1,17 @@
 # Superpowers Release Notes
 
+## Unreleased
+
+### OpenCode 2 Support
+
+- **OpenCode 2 is required** — the plugin now uses the V2 plugin API. V1 implementations do not run in V2, so the old function entrypoint and its `config`, `experimental.chat.messages.transform`, `experimental.session.compacting`, and `session.compacted` hooks were replaced with a default export that has an `id` and `setup(ctx)`.
+- **Skills register through a transform** — the plugin uses `ctx.skill.transform` instead of mutating `config.skills.paths`. Bundled skills keep their names, descriptions, and bodies; `disable-model-invocation: true` maps to `autoinvoke: false`.
+- **Bootstrap is native** — `using-superpowers` is attached to the first prompt of each session with the `prompt` session hook. The plugin checks session history first, so a restart does not duplicate the bootstrap.
+- **Compaction handoff follows V2** — the `compaction` session hook runs `handoff-create`, and the `session.compaction.ended` event runs `handoff-restore`. The restored document is added to the system prompt for the rest of that session.
+- **Bare skill IDs** — OpenCode 2 derives skill IDs from paths, so users load `brainstorming`, `handoff`, and `using-superpowers` without the `superpowers-ruby` prefix. The docs and tests were updated, and `using-superpowers` now points OpenCode users at a dedicated `references/opencode-tools.md`.
+- **Install config is `plugins`** — the docs use the V2 key and the `opencode plugin add` / `opencode plugin update` workflow, plus a note that OpenCode 2 todos are off by default (`experimental.todo`).
+- **Tests now exercise the V2 API** — `tests/opencode/` checks the plugin entrypoint, skill registration, and project-skill priority through OpenCode's `/api/plugin` and `/api/skill` endpoints instead of the removed `use_skill`/`find_skills` tools.
+
 ## v7.5.0 (2026-08-13)
 
 ### Rails Upgrade Skill Caught Up To Rails 8.1.3.1 and 8.2

@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Breaking
+
+- **OpenCode 2 is now required.** The OpenCode plugin was rewritten for the OpenCode 2 plugin API and no longer loads on OpenCode 1. V1 used a function entrypoint with `config`, `experimental.chat.messages.transform`, `experimental.session.compacting`, and `session.compacted` hooks; V2 requires a default export with an `id` and `setup(ctx)` plus domain-specific transforms and hooks.
+- **OpenCode config uses `plugins`, not `plugin`.** Install docs, examples, and tests now use the V2 key and Git plugin spec.
+- **OpenCode skill IDs are bare.** Skills are loaded as `brainstorming`, `handoff`, and `using-superpowers`, not `superpowers-ruby/brainstorming` or `superpowers-ruby:brainstorming`.
+
+### Changed
+
+- **OpenCode plugin ported to V2.** The plugin now registers bundled skills with `ctx.skill.transform`, loads `using-superpowers` once per session through the `prompt` session hook, and captures/restores handoff documents with the `compaction` session hook and `session.compaction.ended` event.
+- **Docs rewritten for V2.** `.opencode/INSTALL.md`, `docs/README.opencode.md`, `docs/testing-plugin-installs.md`, and the main README now describe OpenCode 2 installation, bare skill IDs, `experimental.todo`, and the V2 background service and log locations.
+- **Skill guidance updated for OpenCode 2.** `using-superpowers` now documents bare IDs and links to a new `references/opencode-tools.md`; the `handoff` skill documents the V2 hook/event names.
+- **OpenCode tests rewritten.** `tests/opencode/` now verifies the V2 plugin entrypoint, skill registration via the API, and project-skill priority. The obsolete `use_skill`/`find_skills` tests were replaced.
+- **Package entrypoint.** `package.json` now exposes the plugin file through an `exports` entry, so OpenCode 2 resolves the package entrypoint reliably.
+
 ## [7.5.0] - 2026-08-13
 
 ### Fixed

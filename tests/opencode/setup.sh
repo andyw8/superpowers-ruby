@@ -1,65 +1,95 @@
 #!/usr/bin/env bash
 # Setup script for OpenCode plugin tests
-# Creates an isolated test environment with proper plugin installation
+# Creates isolated test projects that load the plugin from this working tree.
 set -euo pipefail
 
 # Get the repository root (two levels up from tests/opencode/)
-REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-# Create temp home directory for isolation
-export TEST_HOME=$(mktemp -d)
-export HOME="$TEST_HOME"
-export XDG_CONFIG_HOME="$TEST_HOME/.config"
-export OPENCODE_CONFIG_DIR="$TEST_HOME/.config/opencode"
+# Create a temp directory for isolated test projects. The OpenCode service
+# still uses the current user's home so integration tests can reuse the shared
+# background service.
+export TEST_HOME
+TEST_HOME=$(mktemp -d)
 
-# Install plugin to test location
-mkdir -p "$HOME/.config/opencode/superpowers"
-cp -r "$REPO_ROOT/lib" "$HOME/.config/opencode/superpowers/"
-cp -r "$REPO_ROOT/skills" "$HOME/.config/opencode/superpowers/"
+export TEST_PROJECT="$TEST_HOME/project"
+export PRIORITY_PROJECT="$TEST_HOME/priority-project"
 
-# Copy plugin directory
-mkdir -p "$HOME/.config/opencode/superpowers/.opencode/plugins"
-cp "$REPO_ROOT/.opencode/plugins/superpowers.js" "$HOME/.config/opencode/superpowers/.opencode/plugins/"
+install_plugin_fixture() {
+    local target="$1"
 
-# Register plugin via symlink
-mkdir -p "$HOME/.config/opencode/plugins"
-ln -sf "$HOME/.config/opencode/superpowers/.opencode/plugins/superpowers.js" \
-       "$HOME/.config/opencode/plugins/superpowers.js"
+    mkdir -p "$target/.opencode/plugins"
+    cp "$REPO_ROOT/.opencode/plugins/superpowers.js" "$target/.opencode/plugins/superpowers.js"
+    cp -R "$REPO_ROOT/skills" "$target/skills"
+    cp -R "$REPO_ROOT/hooks" "$target/hooks"
 
-# Create test skills in different locations for testing
-
-# Personal test skill
-mkdir -p "$HOME/.config/opencode/skills/personal-test"
-cat > "$HOME/.config/opencode/skills/personal-test/SKILL.md" <<'EOF'
----
-name: personal-test
-description: Test personal skill for verification
----
-# Personal Test Skill
-
-This is a personal skill used for testing.
-
-PERSONAL_SKILL_MARKER_12345
+    cat > "$target/opencode.json" <<'EOF'
+{
+  "$schema": "https://opencode.ai/config.json"
+}
 EOF
+}
 
-# Create a project directory for project-level skill tests
-mkdir -p "$TEST_HOME/test-project/.opencode/skills/project-test"
-cat > "$TEST_HOME/test-project/.opencode/skills/project-test/SKILL.md" <<'EOF'
+install_plugin_fixture "$TEST_PROJECT"
+install_plugin_fixture "$PRIORITY_PROJECT"
+
+# Project test skill
+mkdir -p "$TEST_PROJECT/.opencode/skills/project-test"
+cat > "$TEST_PROJECT/.opencode/skills/project-test/SKILL.md" <<'EOF'
 ---
 name: project-test
 description: Test project skill for verification
 ---
 # Project Test Skill
 
-This is a project skill used for testing.
-
 PROJECT_SKILL_MARKER_67890
 EOF
 
+# Project skill that overrides a bundled skill ID
+mkdir -p "$PRIORITY_PROJECT/.opencode/skills/brainstorming"
+cat > "$PRIORITY_PROJECT/.opencode/skills/brainstorming/SKILL.md" <<'EOF'
+---
+name: brainstorming
+description: PROJECT OVERRIDE
+---
+# Project Brainstorming Override
+
+PROJECT_OVERRIDE_MARKER
+EOF
+
+# Refresh the shared-service discovery file. `opencode api` updates it with the
+# current URL and password; a stale file would point at a stopped server.
+if command -v opencode &> /dev/null; then
+    timeout 60 opencode api get /api/info >/dev/null 2>&1 || true
+fi
+
+# Query the shared OpenCode service directly. `opencode api` truncates large
+# responses (the skill list is several hundred KB), so use curl with the
+# service password to get the complete JSON document.
+oc_api_get() {
+    local path="$1"
+    local project="$2"
+    local service_file="${OPENCODE_SERVICE_FILE:-$HOME/.local/state/opencode/service.json}"
+
+    if [ ! -f "$service_file" ]; then
+        timeout 60 opencode api get /api/info >/dev/null 2>&1 || true
+    fi
+    if [ ! -f "$service_file" ]; then
+        return 1
+    fi
+
+    local password url
+    password=$(jq -r '.password' "$service_file")
+    url=$(jq -r '.url' "$service_file")
+
+    curl -sS --max-time 60 -u "opencode:$password" \
+        --get --data-urlencode "location[directory]=$project" \
+        "$url$path"
+}
+
 echo "Setup complete: $TEST_HOME"
-echo "Plugin installed to: $HOME/.config/opencode/superpowers/.opencode/plugins/superpowers.js"
-echo "Plugin registered at: $HOME/.config/opencode/plugins/superpowers.js"
-echo "Test project at: $TEST_HOME/test-project"
+echo "Plugin project: $TEST_PROJECT"
+echo "Priority project: $PRIORITY_PROJECT"
 
 # Helper function for cleanup (call from tests or trap)
 cleanup_test_env() {
@@ -68,6 +98,5 @@ cleanup_test_env() {
     fi
 }
 
-# Export for use in tests
 export -f cleanup_test_env
 export REPO_ROOT

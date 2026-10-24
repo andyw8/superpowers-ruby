@@ -1,198 +1,84 @@
 #!/usr/bin/env bash
-# Test: Skill Priority Resolution
-# Verifies that skills are resolved with correct priority: project > personal > superpowers
-# NOTE: These tests require OpenCode to be installed and configured
+# Test: Skill priority resolution (integration)
+# Project skills must override bundled skills with the same ID.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-echo "=== Test: Skill Priority Resolution ==="
+echo "=== Test: Skill Priority ==="
 
-# Source setup to create isolated environment
-source "$SCRIPT_DIR/setup.sh"
-
-# Trap to cleanup on exit
-trap cleanup_test_env EXIT
-
-# Create same skill "priority-test" in all three locations with different markers
-echo "Setting up priority test fixtures..."
-
-# 1. Create in superpowers location (lowest priority)
-mkdir -p "$HOME/.config/opencode/superpowers/skills/priority-test"
-cat > "$HOME/.config/opencode/superpowers/skills/priority-test/SKILL.md" <<'EOF'
----
-name: priority-test
-description: Superpowers version of priority test skill
----
-# Priority Test Skill (Superpowers Version)
-
-This is the SUPERPOWERS version of the priority test skill.
-
-PRIORITY_MARKER_SUPERPOWERS_VERSION
-EOF
-
-# 2. Create in personal location (medium priority)
-mkdir -p "$HOME/.config/opencode/skills/priority-test"
-cat > "$HOME/.config/opencode/skills/priority-test/SKILL.md" <<'EOF'
----
-name: priority-test
-description: Personal version of priority test skill
----
-# Priority Test Skill (Personal Version)
-
-This is the PERSONAL version of the priority test skill.
-
-PRIORITY_MARKER_PERSONAL_VERSION
-EOF
-
-# 3. Create in project location (highest priority)
-mkdir -p "$TEST_HOME/test-project/.opencode/skills/priority-test"
-cat > "$TEST_HOME/test-project/.opencode/skills/priority-test/SKILL.md" <<'EOF'
----
-name: priority-test
-description: Project version of priority test skill
----
-# Priority Test Skill (Project Version)
-
-This is the PROJECT version of the priority test skill.
-
-PRIORITY_MARKER_PROJECT_VERSION
-EOF
-
-echo "  Created priority-test skill in all three locations"
-
-# Test 1: Verify fixture setup
-echo ""
-echo "Test 1: Verifying test fixtures..."
-
-if [ -f "$HOME/.config/opencode/superpowers/skills/priority-test/SKILL.md" ]; then
-    echo "  [PASS] Superpowers version exists"
-else
-    echo "  [FAIL] Superpowers version missing"
-    exit 1
-fi
-
-if [ -f "$HOME/.config/opencode/skills/priority-test/SKILL.md" ]; then
-    echo "  [PASS] Personal version exists"
-else
-    echo "  [FAIL] Personal version missing"
-    exit 1
-fi
-
-if [ -f "$TEST_HOME/test-project/.opencode/skills/priority-test/SKILL.md" ]; then
-    echo "  [PASS] Project version exists"
-else
-    echo "  [FAIL] Project version missing"
-    exit 1
-fi
-
-# Check if opencode is available for integration tests
 if ! command -v opencode &> /dev/null; then
-    echo ""
-    echo "  [SKIP] OpenCode not installed - skipping integration tests"
-    echo "  To run these tests, install OpenCode: https://opencode.ai"
-    echo ""
-    echo "=== Priority fixture tests passed (integration tests skipped) ==="
+    echo "  [SKIP] OpenCode not installed - skipping integration test"
+    echo "  Install OpenCode 2: https://opencode.ai"
     exit 0
 fi
 
-# Test 2: Test that personal overrides superpowers
-echo ""
-echo "Test 2: Testing personal > superpowers priority..."
-echo "  Running from outside project directory..."
-
-# Run from HOME (not in project) - should get personal version
-cd "$HOME"
-output=$(timeout 60s opencode run --print-logs "Use the use_skill tool to load the priority-test skill. Show me the exact content including any PRIORITY_MARKER text." 2>&1) || {
-    exit_code=$?
-    if [ $exit_code -eq 124 ]; then
-        echo "  [FAIL] OpenCode timed out after 60s"
-        exit 1
-    fi
-}
-
-if echo "$output" | grep -qi "PRIORITY_MARKER_PERSONAL_VERSION"; then
-    echo "  [PASS] Personal version loaded (overrides superpowers)"
-elif echo "$output" | grep -qi "PRIORITY_MARKER_SUPERPOWERS_VERSION"; then
-    echo "  [FAIL] Superpowers version loaded instead of personal"
-    exit 1
-else
-    echo "  [WARN] Could not verify priority marker in output"
-    echo "  Output snippet:"
-    echo "$output" | grep -i "priority\|personal\|superpowers" | head -10
+if ! command -v jq &> /dev/null || ! command -v curl &> /dev/null; then
+    echo "  [SKIP] jq and curl are required for integration tests"
+    exit 0
 fi
 
-# Test 3: Test that project overrides both personal and superpowers
-echo ""
-echo "Test 3: Testing project > personal > superpowers priority..."
-echo "  Running from project directory..."
+source "$SCRIPT_DIR/setup.sh"
+trap cleanup_test_env EXIT
 
-# Run from project directory - should get project version
-cd "$TEST_HOME/test-project"
-output=$(timeout 60s opencode run --print-logs "Use the use_skill tool to load the priority-test skill. Show me the exact content including any PRIORITY_MARKER text." 2>&1) || {
-    exit_code=$?
-    if [ $exit_code -eq 124 ]; then
-        echo "  [FAIL] OpenCode timed out after 60s"
-        exit 1
-    fi
+api_get() {
+    oc_api_get "$1" "$2" 2>&1 || true
 }
 
-if echo "$output" | grep -qi "PRIORITY_MARKER_PROJECT_VERSION"; then
-    echo "  [PASS] Project version loaded (highest priority)"
-elif echo "$output" | grep -qi "PRIORITY_MARKER_PERSONAL_VERSION"; then
-    echo "  [FAIL] Personal version loaded instead of project"
-    exit 1
-elif echo "$output" | grep -qi "PRIORITY_MARKER_SUPERPOWERS_VERSION"; then
-    echo "  [FAIL] Superpowers version loaded instead of project"
-    exit 1
+echo "Test 1: OpenCode version..."
+version=$(opencode --version 2>/dev/null | head -1)
+case "$version" in
+    *v2.*|2.*)
+        echo "  [PASS] $version is OpenCode 2"
+        ;;
+    *)
+        echo "  [FAIL] OpenCode 2 is required (got: $version)"
+        exit 1
+        ;;
+esac
+
+echo "Test 2: Loading skills for the priority project..."
+skills_output=""
+for _ in $(seq 1 15); do
+    skills_output=$(api_get /api/skill "$PRIORITY_PROJECT")
+    if echo "$skills_output" | grep -q '"description":"PROJECT OVERRIDE"'; then break; fi
+    sleep 1
+done
+
+if echo "$skills_output" | grep -q '"id":"brainstorming"'; then
+    echo "  [PASS] brainstorming is registered"
 else
-    echo "  [WARN] Could not verify priority marker in output"
-    echo "  Output snippet:"
-    echo "$output" | grep -i "priority\|project\|personal" | head -10
+    echo "  [FAIL] brainstorming is not registered"
+    exit 1
 fi
 
-# Test 4: Test explicit superpowers: prefix bypasses priority
-echo ""
-echo "Test 4: Testing superpowers: prefix forces superpowers version..."
+echo "Test 3: The project skill overrides the bundled skill..."
+override=$(echo "$skills_output" | grep -o '"id":"brainstorming"[^}]*' || true)
+if echo "$override" | grep -q '"description":"PROJECT OVERRIDE"'; then
+    echo "  [PASS] Project brainstorming overrides the bundled copy"
+else
+    echo "  [FAIL] Bundled brainstorming won over the project copy"
+    echo "        $override"
+    exit 1
+fi
 
-cd "$TEST_HOME/test-project"
-output=$(timeout 60s opencode run --print-logs "Use the use_skill tool to load superpowers:priority-test specifically. Show me the exact content including any PRIORITY_MARKER text." 2>&1) || {
-    exit_code=$?
-    if [ $exit_code -eq 124 ]; then
-        echo "  [FAIL] OpenCode timed out after 60s"
+if echo "$override" | grep -q "\"path\":\"$PRIORITY_PROJECT/.opencode/skills/brainstorming/SKILL.md\""; then
+    echo "  [PASS] Loaded path points at the project skill"
+else
+    echo "  [FAIL] Loaded path does not point at the project skill"
+    echo "        $override"
+    exit 1
+fi
+
+echo "Test 4: Bundled skills remain available under other IDs..."
+for skill_id in handoff using-superpowers; do
+    if echo "$skills_output" | grep -q "\"id\":\"$skill_id\""; then
+        echo "  [PASS] $skill_id is still registered"
+    else
+        echo "  [FAIL] $skill_id missing"
         exit 1
     fi
-}
-
-if echo "$output" | grep -qi "PRIORITY_MARKER_SUPERPOWERS_VERSION"; then
-    echo "  [PASS] superpowers: prefix correctly forces superpowers version"
-elif echo "$output" | grep -qi "PRIORITY_MARKER_PROJECT_VERSION\|PRIORITY_MARKER_PERSONAL_VERSION"; then
-    echo "  [FAIL] superpowers: prefix did not force superpowers version"
-    exit 1
-else
-    echo "  [WARN] Could not verify priority marker in output"
-fi
-
-# Test 5: Test explicit project: prefix
-echo ""
-echo "Test 5: Testing project: prefix forces project version..."
-
-cd "$HOME"  # Run from outside project but with project: prefix
-output=$(timeout 60s opencode run --print-logs "Use the use_skill tool to load project:priority-test specifically. Show me the exact content." 2>&1) || {
-    exit_code=$?
-    if [ $exit_code -eq 124 ]; then
-        echo "  [FAIL] OpenCode timed out after 60s"
-        exit 1
-    fi
-}
-
-# Note: This may fail since we're not in the project directory
-# The project: prefix only works when in a project context
-if echo "$output" | grep -qi "not found\|error"; then
-    echo "  [PASS] project: prefix correctly fails when not in project context"
-else
-    echo "  [INFO] project: prefix behavior outside project context may vary"
-fi
+done
 
 echo ""
-echo "=== All priority tests passed ==="
+echo "=== All skill priority tests passed ==="
